@@ -13,7 +13,27 @@ allsky_upper_limits_mJy = {'WISE1':68, 'WISE2':111, 'WISE3':860, 'WISE4':5700}
 
 df = t.to_pandas()
 df_allwise = t_ALLWISE.to_pandas()
-df_allwise['id'] = df_allwise['id_in'].str.decode('ascii')
+
+# Extract and normalize 'id' and 'id_in'
+id1 = df['id']
+id2 = df_allwise['id_in']
+if isinstance(id1.iloc[0], bytes):
+    id1 = id1.str.decode('ascii')
+if isinstance(id2.iloc[0], bytes):
+    id2 = id2.str.decode('ascii')
+# Convert both to int if one is string and the other is int
+if (id1.dtype == object and id2.dtype in [np.int64, int]) or \
+   (id2.dtype == object and id1.dtype in [np.int64, int]):
+    try:
+        id1 = id1.astype(int)
+        id2 = id2.astype(int)
+    except ValueError:
+        # If conversion fails, leave as string (not ideal but better than crashing)
+        pass
+
+df['id'] = id1
+df_allwise['id'] = id2
+
 del df_allwise['id_in']
 valid_mask = np.logical_or.reduce([
     df_allwise[f"{band}_err"] > 0 for band in bands
