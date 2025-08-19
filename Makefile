@@ -27,7 +27,7 @@ all:
 		in1=$*_LS_aper.fits suffix1= values1=id \
 		in2=$*_LS_staraper.fits suffix2=_STAR values2=id
 
-%_LS_extaper.fits: addextflux.py %_LS_neighbours_noirlab.fits %_LS_noirlab.fits
+%_LS_extaper.fits: addextflux.py %_LS_noirlab.fits
 	python3 $^ $@
 
 %_all_extflux.fits: %_all.fits %_LS_extaper.fits
@@ -348,7 +348,7 @@ DLLONGQARGS := --drop=True --timeout=10000
 
 ALLOW_POINTLIKE ?= 1
 
-%_all.fits: %.fits %_GALEX.fits %_LS.fits %_UKIDSS.fits %_VHS.fits %_ALLWISE_sum.fits %_GALEX_UL.fits %_SDSS.fits
+%_all.fits: %.fits %_GALEX.fits %_LS.fits %_UKIDSS.fits %_VHS.fits %_ALLWISE_sum.fits %_GALEX_UL.fits
 	# merge everything together and use sensible column names
 	# keep only WISE fluxes when ALLWISE also has a detection there
 	# and if there are no blending issues
@@ -360,7 +360,7 @@ ALLOW_POINTLIKE ?= 1
 	# for WISE, check if W3 or W4 are blended
 	#    if they are, use 3sigma-flux * (3 * fracflux + 1) to estimate a conservative 3 sigma total flux of all sources
 	#    and use that as a (3 sigma) upper limit
-	stilts tmatchn nin=8 out=$@ \
+	stilts tmatchn nin=7 out=$@ \
 		in1=$*.fits suffix1= values1=id \
 		in2=$*_GALEX.fits suffix2=_GALEX values2=id \
 		in3=$*_LS.fits suffix3=_LS values3=id \
@@ -368,11 +368,10 @@ ALLOW_POINTLIKE ?= 1
 		in5=$*_VHS.fits suffix5=_VHS values5=id \
 		in6=$*_ALLWISE_sum.fits suffix6=_ALLWISE values6=id \
 		in7=$*_GALEX_UL.fits suffix7=_GALEXUL values7=id \
-		in8=$*_SDSS.fits suffix8=_SDSS values8=id \
 		fixcols=all matcher=exact \
 		ocmd='addcol pointlike "!(type_LS != \"PSF\")&&1=='${ALLOW_POINTLIKE}'"' \
 		ocmd='addcol inMzLSBASS "DEC>32&&RA>90&&RA<300"' \
-		ocmd='addcol goodfitsLS "(fitbits_LS & (1 | 4 | 8)) == 0 && (maskbits_LS & (1024 | 2048)) == 0"' \
+		ocmd='addcol goodfitsLS "(pointlike ? (fitbits_LS & (1 | 4 | 8)) == 0 : 1==1) && (maskbits_LS & (1024 | 2048)) == 0"' \
 		ocmd='addcol goodfitsg "goodfitsLS && (maskbits_LS & 4) == 0 && fracin_g_LS>0.5"' \
 		ocmd='addcol goodfitsr "goodfitsLS && (maskbits_LS & 8) == 0 && fracin_r_LS>0.5"' \
 		ocmd='addcol goodfitsz "goodfitsLS && (maskbits_LS & 16) == 0 && fracin_z_LS>0.5"' \
@@ -426,6 +425,12 @@ ALLOW_POINTLIKE ?= 1
 		ocmd='addcol WISE3_err "isolatedLS&&goodfitsW1&&goodfitsW2&&!W34_blended ? LU_flux_w3_err_LS*1e26 : -99"' \
 		ocmd='addcol WISE4 "isolatedLS&&goodfitsW1&&goodfitsW2&&!W34_blended ? LU_flux_w4_LS*1e26 : -99"' \
 		ocmd='addcol WISE4_err "isolatedLS&&goodfitsW1&&goodfitsW2&&!W34_blended ? LU_flux_w4_err_LS*1e26 : -99"' \
+
+%_withSDSS.fits: %.fits %_SDSS.fits
+	stilts tmatch2 out=$@ join=all1 \
+		in1=$*.fits suffix1= values1=id \
+		in2=$*_SDSS.fits suffix2=_SDSS values2=id \
+		fixcols=all matcher=exact \
 		ocmd='addcol u_sdss "pointlike?psfMag_u_SDSS:aper_u_SDSS"' \
 		ocmd='addcol u_sdss_err "pointlike?psfMagErr_u_SDSS:aper_u_err_SDSS"' \
 		ocmd='addcol g_sdss "pointlike?psfMag_g_SDSS:aper_g_SDSS"' \
@@ -436,6 +441,31 @@ ALLOW_POINTLIKE ?= 1
 		ocmd='addcol i_sdss_err "pointlike?psfMagErr_i_SDSS:aper_i_err_SDSS"' \
 		ocmd='addcol z_sdss "pointlike?psfMag_z_SDSS:aper_z_SDSS"' \
 		ocmd='addcol z_sdss_err "pointlike?psfMagErr_z_SDSS:aper_z_err_SDSS"' \
+
+
+%_all_extflux_withEuclid.fits: %_all_extflux.fits %_EuclidQ1_noirlab.fits
+	# currently, Euclid catalogs do not provide aperture fluxes with suitable diameters
+	# We follow other studies and assume the morphology ~wavelength-independent
+	# so we first compute the Euclid extended flux, then apply it to optical flux columns.
+	# Euclid VIS is 5400A-9300A, which overlaps with decam g,r,i (not z)
+	# we add a gal_decam_r+z prior based on the fraction of Euclid extended flux.
+	# min(pow(10, 0.4*(mumax_minus_mag)) - 0.06 - 0.03, 1)
+	# for the error, we assume 1% 1sigma error (for systematics).
+	# we override the decam columns if the Euclid constraints are better (they should be).
+	stilts tmatch2 out=$@ join=all1 \
+		in1=$< suffix1= values1=id \
+		in2=$*_EuclidQ1_noirlab.fits suffix2=_EuclidQ1 values2=id \
+		fixcols=all matcher=exact \
+		ocmd='addcol reliable_euclid "DET_QUALITY_FLAG_EuclidQ1 < 4 && SPURIOUS_FLAG_EuclidQ1==0"' \
+		ocmd='addcol frac_extended_euclid "reliable_euclid ? min(pow(10, 0.4*(mumax_minus_mag_EuclidQ1)) - 0.06 - 0.03, 1):-99"' \
+		ocmd='addcol prior_GALflux_decam_g_keep "!(frac_extended_euclid>0)||prior_GALflux_decam_g_errlo>0&&prior_GALflux_decam_g>decam_g*frac_extended_euclid"' \
+		ocmd='addcol prior_GALflux_decam_r_keep "!(frac_extended_euclid>0)||prior_GALflux_decam_r_errlo>0&&prior_GALflux_decam_r>decam_r*frac_extended_euclid"' \
+		ocmd='replacecol prior_GALflux_decam_g "prior_GALflux_decam_g_keep?prior_GALflux_decam_g:(decam_g>0&&frac_extended_euclid>0?decam_g*frac_extended_euclid:-99)"' \
+		ocmd='replacecol prior_GALflux_decam_r "prior_GALflux_decam_r_keep?prior_GALflux_decam_r:(decam_r>0&&frac_extended_euclid>0?decam_r*frac_extended_euclid:-99)"' \
+		ocmd='replacecol prior_GALflux_decam_g_errlo "prior_GALflux_decam_g_keep?prior_GALflux_decam_g_errlo:(prior_GALflux_decam_g>0?prior_GALflux_decam_g*0.01:-99)"' \
+		ocmd='replacecol prior_GALflux_decam_r_errlo "prior_GALflux_decam_r_keep?prior_GALflux_decam_r_errlo:(prior_GALflux_decam_r>0?prior_GALflux_decam_r*0.01:-99)"' \
+		ocmd='replacecol prior_GALflux_decam_g_errhi "prior_GALflux_decam_g_keep?prior_GALflux_decam_g_errhi:1e10"' \
+		ocmd='replacecol prior_GALflux_decam_r_errhi "prior_GALflux_decam_r_keep?prior_GALflux_decam_r_errhi:1e10"' \
 
 
 %_HSCall.fits: %.fits %_GALEX.fits %_LS.fits %_UKIDSS.fits %_VHS.fits %_ALLWISE_sum.fits %_GALEX_UL.fits %_HSC.fits
@@ -582,27 +612,6 @@ ALLOW_POINTLIKE ?= 1
 %_lite.fits: %.fits
 	stilts tpipe in=$^ out=$@ cmd='delcols "adflux*_LS *_LS LU_flux*_LS *_GALEX *_VHS *_UKIDSS *_ALLWISE *_GALEXUL *_HSC_extaper *_HSC psf*_SDSS aper*_SDSS id*_SDSS ra*_SDSS dec*_SDSS"'
 	stilts tpipe in=$@ omode=stats
-
-%_all_lite_EuclidQ1.fits: %_all_lite.fits %_EuclidQ1_noirlab.fits
-	# use information from euclid whether a source is extended
-	# here we use mumax_minus_mag_Euclid<2.3 -- TODO: check Euclid papers for recommended threshold
-	# we do not know the fraction of the galaxy flux that is extended
-	# we assume at least 5% if mumax_minus_mag_Euclid<2.3
-	# this is applied to Euclid flux in the Y band
-	# although it is (?) derived in VIS (which is not included here)
-	stilts tmatch2 matcher=exact find=best1 out=$@ fixcols=all \
-		in1=$< values1=id suffix1= \
-		in2=$*_EuclidQ1_noirlab.fits values2=id suffix2=_Euclid \
-		ocmd='addcol Euclid_NISP_Y "flux_y_sersic_Euclid/1000"' \
-		ocmd='addcol Euclid_NISP_J "flux_j_sersic_Euclid/1000"' \
-		ocmd='addcol Euclid_NISP_H "flux_h_sersic_Euclid/1000"' \
-		ocmd='addcol Euclid_NISP_Y_err "fluxerr_y_sersic_Euclid/1000"' \
-		ocmd='addcol Euclid_NISP_J_err "fluxerr_j_sersic_Euclid/1000"' \
-		ocmd='addcol Euclid_NISP_H_err "fluxerr_h_sersic_Euclid/1000"' \
-		ocmd='addcol is_extended_euclid "mumax_minus_mag_Euclid<2.3&&(decam_z<0.8||decam_r<0.8)&&flux_y_sersic_Euclid<1"' \
-		ocmd='addcol prior_GALflux_Euclid_NISP_Y "is_extended_euclid?Euclid_NISP_Y/20:-99"' \
-		ocmd='addcol prior_GALflux_Euclid_NISP_Y_errlo "is_extended_euclid?Euclid_NISP_Y_err:-99"' \
-		ocmd='addcol prior_GALflux_Euclid_NISP_Y_errhi "1e10"' 
 
 
 %.fits_errors.pdf %.fits_fluxes.pdf: %.fits
