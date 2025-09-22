@@ -134,6 +134,8 @@ into a text file ~/.config/sciserver/login.txt:
 
     username:password
 
+Additional prerequisite: SciScript-Python
+
 If you also want HSC-WIDE fluxes, you can run:
 
   $ make path/to/data/dr16QWX_selection_allHSC_lite.fits
